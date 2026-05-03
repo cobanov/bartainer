@@ -103,28 +103,13 @@ final class ContainerViewController: NSViewController {
     private let rootStack = NSStackView()
     private let contentStack = NSStackView()
     private let containerSection = NSStackView()
-    private let generalSection = NSStackView()
-    private let hostsSection = NSStackView()
     private let scrollView = NSScrollView()
     private let rowsStack = FlippedStackView()
-    private let hostListStack = FlippedStackView()
     private let summaryLabel = NSTextField(labelWithString: "Loading containers...")
     private let spinner = NSProgressIndicator()
-    private let launchAtLoginButton = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
-    private let nameField = NSTextField()
-    private let addressField = NSTextField()
-    private let userField = NSTextField()
-    private let portField = NSTextField(string: "22")
-    private let passwordField = NSSecureTextField()
-    private let formTitleLabel = NSTextField(labelWithString: "Add Remote Host")
-    private let saveHostButton = NSButton(title: "Add Host", target: nil, action: nil)
-    private let cancelEditButton = NSButton(title: "Cancel", target: nil, action: nil)
-    private let removeHostButton = NSButton(title: "Remove", target: nil, action: nil)
     private var scrollHeightConstraint: NSLayoutConstraint?
-    private var contentHeightConstraint: NSLayoutConstraint?
     private var refreshTimer: Timer?
     private var isRefreshing = false
-    private var editingHostIndex: Int?
     var onContentHeightChange: ((CGFloat) -> Void)?
 
     init(service: DockerService) {
@@ -264,7 +249,7 @@ final class ContainerViewController: NSViewController {
     }
 
     private func headerRow() -> NSView {
-        let row = RowView(isHeader: true)
+        let row = RowView(isHeader: true, rowIndex: 0)
         row.configure(values: [
             "ID",
             "NAME",
@@ -297,6 +282,7 @@ final class ContainerViewController: NSViewController {
         let renderedRows = containers.count + snapshot.errors.count + snapshot.hosts.count
         scrollView.hasVerticalScroller = renderedRows > 9
 
+        var globalRowIndex = 0
         for identity in snapshot.hosts {
             let hostContainers = containers.filter { $0.host == identity.key }
             let hostErrors = snapshot.errors.filter { $0.host == identity.key }
@@ -308,7 +294,7 @@ final class ContainerViewController: NSViewController {
             rowsStack.addArrangedSubview(SegmentHeaderView(title: identity.title))
 
             for container in hostContainers {
-                let row = RowView(isHeader: false)
+                let row = RowView(isHeader: false, rowIndex: globalRowIndex)
                 row.configure(values: [
                     container.shortID,
                     container.name,
@@ -318,19 +304,21 @@ final class ContainerViewController: NSViewController {
                     container.portsDisplay
                 ], state: container.state)
                 rowsStack.addArrangedSubview(row)
+                globalRowIndex += 1
             }
 
             for hostError in hostErrors {
-                let row = RowView(isHeader: false)
+                let row = RowView(isHeader: false, rowIndex: globalRowIndex)
                 row.configure(values: [
                     "-",
                     "unavailable",
                     "-",
-                    "[ERROR]",
+                    "ERROR",
                     hostError.message,
                     "-"
                 ], state: "error")
                 rowsStack.addArrangedSubview(row)
+                globalRowIndex += 1
             }
         }
 
@@ -385,303 +373,19 @@ final class ContainerViewController: NSViewController {
         scrollHeightConstraint?.constant = scrollHeight
         onContentHeightChange?(emptyOrError ? 138 : min(382, 82 + scrollHeight))
     }
-
-    private func showTab(index: Int) {
-        containerSection.isHidden = index != 0
-        generalSection.isHidden = index != 1
-        hostsSection.isHidden = index != 2
-
-        switch index {
-        case 1:
-            summaryLabel.stringValue = "General"
-            syncLaunchAtLoginState()
-            onContentHeightChange?(214)
-        case 2:
-            summaryLabel.stringValue = "\(hostStore.load().count) remote hosts"
-            renderHosts()
-            onContentHeightChange?(420)
-        default:
-            refresh()
-        }
-    }
-
-    private func buildGeneralSection() {
-        generalSection.orientation = .vertical
-        generalSection.spacing = 14
-        generalSection.edgeInsets = NSEdgeInsets(top: 18, left: 12, bottom: 12, right: 12)
-
-        let title = NSTextField(labelWithString: "General")
-        title.font = .systemFont(ofSize: 15, weight: .semibold)
-
-        launchAtLoginButton.target = self
-        launchAtLoginButton.action = #selector(toggleLaunchAtLogin)
-
-        let quitButton = NSButton(title: "Quit Bartainer", target: self, action: #selector(quit))
-        quitButton.bezelStyle = .rounded
-
-        let note = NSTextField(wrappingLabelWithString: "Remote host passwords are temporarily stored plainly for testing. Next step: move them to macOS Keychain.")
-        note.font = .systemFont(ofSize: 11)
-        note.textColor = .secondaryLabelColor
-
-        generalSection.addArrangedSubview(title)
-        generalSection.addArrangedSubview(launchAtLoginButton)
-        generalSection.addArrangedSubview(note)
-        generalSection.addArrangedSubview(quitButton)
-    }
-
-    private func buildHostsSection() {
-        hostsSection.orientation = .vertical
-        hostsSection.spacing = 10
-        hostsSection.edgeInsets = NSEdgeInsets(top: 12, left: 10, bottom: 10, right: 10)
-
-        let topRow = NSStackView()
-        topRow.orientation = .horizontal
-        topRow.alignment = .centerY
-        topRow.spacing = 8
-
-        let title = NSTextField(labelWithString: "Remote Hosts")
-        title.font = .systemFont(ofSize: 15, weight: .semibold)
-
-        let newButton = NSButton(title: "Add New", target: self, action: #selector(startNewHost))
-        newButton.bezelStyle = .rounded
-
-        topRow.addArrangedSubview(title)
-        topRow.addArrangedSubview(NSView())
-        topRow.addArrangedSubview(newButton)
-        hostsSection.addArrangedSubview(topRow)
-
-        hostListStack.orientation = .vertical
-        hostListStack.spacing = 6
-
-        let hostScrollView = NSScrollView()
-        hostScrollView.drawsBackground = false
-        hostScrollView.borderType = .noBorder
-        hostScrollView.hasVerticalScroller = true
-        hostScrollView.documentView = hostListStack
-        hostScrollView.translatesAutoresizingMaskIntoConstraints = false
-        hostsSection.addArrangedSubview(hostScrollView)
-
-        NSLayoutConstraint.activate([
-            hostScrollView.heightAnchor.constraint(equalToConstant: 144),
-            hostListStack.leadingAnchor.constraint(equalTo: hostScrollView.contentView.leadingAnchor),
-            hostListStack.trailingAnchor.constraint(equalTo: hostScrollView.contentView.trailingAnchor),
-            hostListStack.topAnchor.constraint(equalTo: hostScrollView.contentView.topAnchor),
-            hostListStack.widthAnchor.constraint(equalTo: hostScrollView.contentView.widthAnchor)
-        ])
-
-        formTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        hostsSection.addArrangedSubview(formTitleLabel)
-
-        let form = NSGridView(views: [
-            [label("Name"), nameField],
-            [label("Address"), addressField],
-            [label("User"), userField],
-            [label("Port"), portField],
-            [label("Password"), passwordField]
-        ])
-        form.column(at: 0).width = 76
-        form.rowSpacing = 6
-        form.columnSpacing = 10
-        hostsSection.addArrangedSubview(form)
-
-        nameField.placeholderString = "home-server"
-        addressField.placeholderString = "100.124.170.43"
-        userField.placeholderString = NSUserName()
-        portField.placeholderString = "22"
-        passwordField.placeholderString = "temporary plain password"
-
-        saveHostButton.target = self
-        saveHostButton.action = #selector(saveHost)
-        saveHostButton.bezelStyle = .rounded
-
-        cancelEditButton.target = self
-        cancelEditButton.action = #selector(cancelHostEdit)
-        cancelEditButton.bezelStyle = .rounded
-
-        removeHostButton.target = self
-        removeHostButton.action = #selector(removeSelectedHost)
-        removeHostButton.bezelStyle = .rounded
-
-        let actionRow = NSStackView()
-        actionRow.orientation = .horizontal
-        actionRow.alignment = .centerY
-        actionRow.spacing = 8
-        actionRow.addArrangedSubview(saveHostButton)
-        actionRow.addArrangedSubview(cancelEditButton)
-        actionRow.addArrangedSubview(removeHostButton)
-        actionRow.addArrangedSubview(NSView())
-        hostsSection.addArrangedSubview(actionRow)
-
-        resetHostForm()
-    }
-
-    private func renderHosts() {
-        hostListStack.arrangedSubviews.forEach { view in
-            hostListStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-
-        let hosts = hostStore.load()
-        guard !hosts.isEmpty else {
-            let empty = NSTextField(labelWithString: "No remote hosts yet.")
-            empty.textColor = .secondaryLabelColor
-            empty.font = .systemFont(ofSize: 13)
-            hostListStack.addArrangedSubview(empty)
-            return
-        }
-
-        for index in hosts.indices {
-            let row = HostRowView(host: hosts[index], index: index, isSelected: editingHostIndex == index)
-            row.onToggle = { [weak self] rowIndex, enabled in
-                self?.setHost(rowIndex, enabled: enabled)
-            }
-            row.onDelete = { [weak self] rowIndex in
-                self?.deleteHost(rowIndex)
-            }
-            row.onSelect = { [weak self] rowIndex in
-                self?.editHost(rowIndex)
-            }
-            hostListStack.addArrangedSubview(row)
-        }
-    }
-
-    @objc private func startNewHost() {
-        resetHostForm()
-    }
-
-    @objc private func saveHost() {
-        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !address.isEmpty else { return }
-
-        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let user = userField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let port = Int(portField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
-        let password = passwordField.stringValue
-        var hosts = hostStore.load()
-
-        let host = DockerHost(
-            name: name,
-            address: address,
-            user: user.isEmpty ? NSUserName() : user,
-            port: max(port, 1),
-            enabled: true,
-            password: password.isEmpty ? nil : password
-        )
-
-        if let editingHostIndex, hosts.indices.contains(editingHostIndex) {
-            var updated = host
-            updated.enabled = hosts[editingHostIndex].enabled
-            hosts[editingHostIndex] = updated
-        } else {
-            hosts.append(host)
-        }
-
-        hostStore.save(hosts)
-        resetHostForm()
-        renderHosts()
-        refresh()
-        summaryLabel.stringValue = "\(hosts.count) remote hosts"
-    }
-
-    @objc private func cancelHostEdit() {
-        resetHostForm()
-        renderHosts()
-    }
-
-    @objc private func removeSelectedHost() {
-        guard let editingHostIndex else { return }
-        deleteHost(editingHostIndex)
-    }
-
-    private func editHost(_ index: Int) {
-        let hosts = hostStore.load()
-        guard hosts.indices.contains(index) else { return }
-        let host = hosts[index]
-        editingHostIndex = index
-        formTitleLabel.stringValue = "Edit \(host.displayName)"
-        saveHostButton.title = "Save Changes"
-        cancelEditButton.isHidden = false
-        removeHostButton.isHidden = false
-        nameField.stringValue = host.name
-        addressField.stringValue = host.address
-        userField.stringValue = host.user
-        portField.stringValue = "\(host.port)"
-        passwordField.stringValue = host.password ?? ""
-        renderHosts()
-    }
-
-    private func resetHostForm() {
-        editingHostIndex = nil
-        formTitleLabel.stringValue = "Add Remote Host"
-        saveHostButton.title = "Add Host"
-        cancelEditButton.isHidden = true
-        removeHostButton.isHidden = true
-        nameField.stringValue = ""
-        addressField.stringValue = ""
-        userField.stringValue = ""
-        portField.stringValue = "22"
-        passwordField.stringValue = ""
-    }
-
-    private func setHost(_ index: Int, enabled: Bool) {
-        var hosts = hostStore.load()
-        guard hosts.indices.contains(index) else { return }
-        hosts[index].enabled = enabled
-        hostStore.save(hosts)
-        renderHosts()
-    }
-
-    private func deleteHost(_ index: Int) {
-        var hosts = hostStore.load()
-        guard hosts.indices.contains(index) else { return }
-        hosts.remove(at: index)
-        hostStore.save(hosts)
-        resetHostForm()
-        renderHosts()
-        refresh()
-        summaryLabel.stringValue = "\(hosts.count) remote hosts"
-    }
-
-    private func label(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.textColor = .secondaryLabelColor
-        return label
-    }
-
-    private func syncLaunchAtLoginState() {
-        if #available(macOS 13.0, *) {
-            launchAtLoginButton.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        } else {
-            launchAtLoginButton.isEnabled = false
-            launchAtLoginButton.state = .off
-        }
-    }
-
-    @objc private func toggleLaunchAtLogin() {
-        guard #available(macOS 13.0, *) else { return }
-
-        do {
-            if launchAtLoginButton.state == .on {
-                if SMAppService.mainApp.status != .enabled {
-                    try SMAppService.mainApp.register()
-                }
-            } else if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            launchAtLoginButton.state = SMAppService.mainApp.status == .enabled ? .on : .off
-            summaryLabel.stringValue = "Launch at login failed"
-        }
-    }
 }
 
 final class RowView: NSView {
     private let columnWidths: [CGFloat] = [88, 152, 70, 84, 176, 122]
     private let labels: [CopyableTextField]
     private let isHeader: Bool
+    private let rowIndex: Int
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false
 
-    init(isHeader: Bool) {
+    init(isHeader: Bool, rowIndex: Int) {
         self.isHeader = isHeader
+        self.rowIndex = rowIndex
         self.labels = columnWidths.map { _ in CopyableTextField(isCopyEnabled: !isHeader) }
         super.init(frame: .zero)
         build()
@@ -702,9 +406,7 @@ final class RowView: NSView {
 
     private func build() {
         wantsLayer = true
-        layer?.backgroundColor = isHeader
-            ? NSColor.controlBackgroundColor.withAlphaComponent(0.64).cgColor
-            : NSColor.clear.cgColor
+        updateBackground()
 
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -732,6 +434,43 @@ final class RowView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
+    }
+
+    private func updateBackground() {
+        guard !isHeader else {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.64).cgColor
+            return
+        }
+        if isHovered {
+            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
+        } else if rowIndex % 2 == 1 {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.22).cgColor
+        } else {
+            layer?.backgroundColor = NSColor.clear.cgColor
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        guard !isHeader else { return }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil
+        )
+        trackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateBackground()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateBackground()
     }
 
     private func color(for index: Int, state: String?) -> NSColor {
@@ -992,10 +731,10 @@ final class EmptyStateView: NSView {
 }
 
 final class FlippedStackView: NSStackView {
-    override var isFlipped: Bool {
-        true
-    }
+    override var isFlipped: Bool { true }
 }
+
+// MARK: - Settings Window
 
 @MainActor
 final class SettingsWindowController: NSWindowController {
@@ -1004,7 +743,7 @@ final class SettingsWindowController: NSWindowController {
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 530),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -1032,22 +771,21 @@ final class SettingsWindowController: NSWindowController {
 
 @MainActor
 final class SettingsViewController: NSViewController {
-    private enum Section {
-        case general
-        case hosts
-        case about
-    }
+    private enum Section { case general, hosts, about }
 
     private let hostStore: HostStore
     private let onChange: () -> Void
+
     private let generalButton = SettingsSidebarButton(title: "General", symbolName: "gearshape.fill")
     private let hostsButton = SettingsSidebarButton(title: "Hosts", symbolName: "server.rack")
     private let aboutButton = SettingsSidebarButton(title: "About", symbolName: "info.circle.fill")
+
     private let generalSection = NSStackView()
     private let hostsSection = NSStackView()
     private let aboutSection = NSStackView()
+
     private let hostListStack = FlippedStackView()
-    private let launchAtLoginButton = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
+    private let launchAtLoginToggle = NSSwitch()
     private let nameField = NSTextField()
     private let addressField = NSTextField()
     private let userField = NSTextField()
@@ -1070,8 +808,8 @@ final class SettingsViewController: NSViewController {
     }
 
     override func loadView() {
-        let glass = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 900, height: 640))
-        glass.material = .hudWindow
+        let glass = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 760, height: 530))
+        glass.material = .windowBackground
         glass.blendingMode = .behindWindow
         glass.state = .active
         view = glass
@@ -1095,18 +833,41 @@ final class SettingsViewController: NSViewController {
 
         root.addArrangedSubview(sidebar())
 
-        let content = NSStackView()
-        content.orientation = .vertical
-        content.spacing = 0
-        content.edgeInsets = NSEdgeInsets(top: 34, left: 34, bottom: 34, right: 34)
-        root.addArrangedSubview(content)
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        root.addArrangedSubview(divider)
+
+        let content = NSScrollView()
+        content.drawsBackground = false
+        content.borderType = .noBorder
+        content.hasVerticalScroller = false
+
+        let contentStack = NSStackView()
+        contentStack.orientation = .vertical
+        contentStack.spacing = 0
+        contentStack.edgeInsets = NSEdgeInsets(top: 32, left: 32, bottom: 32, right: 32)
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
 
         buildGeneralSection()
         buildHostsSection()
         buildAboutSection()
-        content.addArrangedSubview(generalSection)
-        content.addArrangedSubview(hostsSection)
-        content.addArrangedSubview(aboutSection)
+        contentStack.addArrangedSubview(generalSection)
+        contentStack.addArrangedSubview(hostsSection)
+        contentStack.addArrangedSubview(aboutSection)
+
+        content.documentView = contentStack
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: content.contentView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: content.contentView.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: content.contentView.topAnchor),
+            contentStack.widthAnchor.constraint(equalTo: content.contentView.widthAnchor)
+        ])
+
+        root.addArrangedSubview(content)
     }
 
     private func sidebar() -> NSView {
@@ -1115,12 +876,13 @@ final class SettingsViewController: NSViewController {
         sidebar.blendingMode = .withinWindow
         sidebar.state = .active
         sidebar.translatesAutoresizingMaskIntoConstraints = false
-        sidebar.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        sidebar.widthAnchor.constraint(equalToConstant: 210).isActive = true
 
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 84, left: 18, bottom: 24, right: 18)
+        stack.spacing = 2
+        stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: 52, left: 12, bottom: 20, right: 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
         sidebar.addSubview(stack)
 
@@ -1139,21 +901,35 @@ final class SettingsViewController: NSViewController {
         aboutButton.action = #selector(selectAbout)
 
         stack.addArrangedSubview(generalButton)
-        stack.addArrangedSubview(sectionLabel("Settings"))
+        stack.addArrangedSubview(sidebarSectionLabel("Settings"))
         stack.addArrangedSubview(hostsButton)
-        stack.addArrangedSubview(sectionLabel("Bartainer"))
+        stack.addArrangedSubview(sidebarSectionLabel("Bartainer"))
         stack.addArrangedSubview(aboutButton)
         stack.addArrangedSubview(NSView())
+
+        NSLayoutConstraint.activate([
+            generalButton.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 4),
+            generalButton.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -4),
+            hostsButton.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 4),
+            hostsButton.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -4),
+            aboutButton.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 4),
+            aboutButton.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -4)
+        ])
+
         return sidebar
     }
 
     private func buildGeneralSection() {
         generalSection.orientation = .vertical
-        generalSection.spacing = 18
+        generalSection.spacing = 16
         generalSection.addArrangedSubview(pageTitle("General", symbolName: "gearshape.fill"))
 
-        launchAtLoginButton.target = self
-        launchAtLoginButton.action = #selector(toggleLaunchAtLogin)
+        launchAtLoginToggle.target = self
+        launchAtLoginToggle.action = #selector(toggleLaunchAtLogin)
+
+        let quitButton = NSButton(title: "Quit Bartainer", target: self, action: #selector(quit))
+        quitButton.bezelStyle = .rounded
+        quitButton.controlSize = .regular
 
         let card = settingsCard()
         let stack = NSStackView()
@@ -1161,7 +937,6 @@ final class SettingsViewController: NSViewController {
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
-
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
@@ -1169,15 +944,11 @@ final class SettingsViewController: NSViewController {
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor)
         ])
 
-        let quitButton = NSButton(title: "Quit", target: self, action: #selector(quit))
-        quitButton.bezelStyle = .rounded
-        stack.addArrangedSubview(settingRow(title: "Launch at login", control: launchAtLoginButton))
+        stack.addArrangedSubview(settingRow(title: "Launch at login", subtitle: "Start Bartainer automatically on login", control: launchAtLoginToggle))
         stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(settingRow(title: "Quit Bartainer", control: quitButton))
+        stack.addArrangedSubview(settingRow(title: "Quit Bartainer", subtitle: "Close the app and remove the menu bar icon", control: quitButton))
 
-        let note = NSTextField(wrappingLabelWithString: "Remote host passwords are temporarily stored plainly for testing. Next step: move them to macOS Keychain.")
-        note.font = .systemFont(ofSize: 12)
-        note.textColor = .secondaryLabelColor
+        let note = infoNote("Remote host passwords are temporarily stored in plain text. They will be moved to the macOS Keychain in a future update.")
 
         generalSection.addArrangedSubview(card)
         generalSection.addArrangedSubview(note)
@@ -1186,35 +957,69 @@ final class SettingsViewController: NSViewController {
 
     private func buildHostsSection() {
         hostsSection.orientation = .vertical
-        hostsSection.spacing = 14
+        hostsSection.spacing = 16
         hostsSection.addArrangedSubview(pageTitle("Hosts", symbolName: "server.rack"))
 
+        // Host list card
+        let listCard = settingsCard()
+        let listCardStack = NSStackView()
+        listCardStack.orientation = .vertical
+        listCardStack.spacing = 0
+        listCardStack.translatesAutoresizingMaskIntoConstraints = false
+        listCard.addSubview(listCardStack)
+        NSLayoutConstraint.activate([
+            listCardStack.leadingAnchor.constraint(equalTo: listCard.leadingAnchor),
+            listCardStack.trailingAnchor.constraint(equalTo: listCard.trailingAnchor),
+            listCardStack.topAnchor.constraint(equalTo: listCard.topAnchor),
+            listCardStack.bottomAnchor.constraint(equalTo: listCard.bottomAnchor)
+        ])
+
+        // List header
+        let listHeader = NSStackView()
+        listHeader.orientation = .horizontal
+        listHeader.alignment = .centerY
+        listHeader.edgeInsets = NSEdgeInsets(top: 10, left: 16, bottom: 10, right: 12)
+        let listTitle = NSTextField(labelWithString: "Remote Hosts")
+        listTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        let addNewButton = NSButton(title: "+ Add New", target: self, action: #selector(startNewHost))
+        addNewButton.bezelStyle = .rounded
+        addNewButton.controlSize = .small
+        addNewButton.font = .systemFont(ofSize: 12)
+        listHeader.addArrangedSubview(listTitle)
+        listHeader.addArrangedSubview(NSView())
+        listHeader.addArrangedSubview(addNewButton)
+        listCardStack.addArrangedSubview(listHeader)
+        listCardStack.addArrangedSubview(separator())
+
         hostListStack.orientation = .vertical
-        hostListStack.spacing = 8
+        hostListStack.spacing = 0
+
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
         scrollView.hasVerticalScroller = true
         scrollView.documentView = hostListStack
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        hostsSection.addArrangedSubview(scrollView)
+        listCardStack.addArrangedSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            scrollView.heightAnchor.constraint(equalToConstant: 190),
+            scrollView.heightAnchor.constraint(equalToConstant: 170),
             hostListStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             hostListStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
             hostListStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             hostListStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
         ])
 
+        hostsSection.addArrangedSubview(listCard)
+
+        // Form card
         let formCard = settingsCard()
         let formStack = NSStackView()
         formStack.orientation = .vertical
-        formStack.spacing = 12
-        formStack.edgeInsets = NSEdgeInsets(top: 16, left: 18, bottom: 16, right: 18)
+        formStack.spacing = 10
+        formStack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         formStack.translatesAutoresizingMaskIntoConstraints = false
         formCard.addSubview(formStack)
-
         NSLayoutConstraint.activate([
             formStack.leadingAnchor.constraint(equalTo: formCard.leadingAnchor),
             formStack.trailingAnchor.constraint(equalTo: formCard.trailingAnchor),
@@ -1222,47 +1027,53 @@ final class SettingsViewController: NSViewController {
             formStack.bottomAnchor.constraint(equalTo: formCard.bottomAnchor)
         ])
 
-        formTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        formTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         formStack.addArrangedSubview(formTitleLabel)
 
-        let form = NSGridView(views: [
-            [label("Name"), nameField],
-            [label("Address"), addressField],
-            [label("User"), userField],
-            [label("Port"), portField],
-            [label("Password"), passwordField]
+        let grid = NSGridView(views: [
+            [formLabel("Name"), nameField],
+            [formLabel("Address"), addressField],
+            [formLabel("User"), userField],
+            [formLabel("Port"), portField],
+            [formLabel("Password"), passwordField]
         ])
-        form.column(at: 0).width = 78
-        form.rowSpacing = 7
-        form.columnSpacing = 12
-        formStack.addArrangedSubview(form)
+        grid.column(at: 0).width = 72
+        grid.rowSpacing = 6
+        grid.columnSpacing = 10
+        formStack.addArrangedSubview(grid)
 
         nameField.placeholderString = "home-server"
-        addressField.placeholderString = "100.124.170.43"
+        nameField.font = .systemFont(ofSize: 13)
+        addressField.placeholderString = "192.168.1.100"
+        addressField.font = .systemFont(ofSize: 13)
         userField.placeholderString = NSUserName()
+        userField.font = .systemFont(ofSize: 13)
         portField.placeholderString = "22"
-        passwordField.placeholderString = "temporary plain password"
+        portField.font = .systemFont(ofSize: 13)
+        passwordField.placeholderString = "temporary plain text (will move to Keychain)"
+        passwordField.font = .systemFont(ofSize: 13)
 
         saveHostButton.target = self
         saveHostButton.action = #selector(saveHost)
         saveHostButton.bezelStyle = .rounded
+        saveHostButton.keyEquivalent = "\r"
+
         cancelEditButton.target = self
         cancelEditButton.action = #selector(cancelHostEdit)
         cancelEditButton.bezelStyle = .rounded
+
         removeHostButton.target = self
         removeHostButton.action = #selector(removeSelectedHost)
         removeHostButton.bezelStyle = .rounded
+        removeHostButton.contentTintColor = .systemRed
 
         let actionRow = NSStackView()
         actionRow.orientation = .horizontal
         actionRow.spacing = 8
-        let addNew = NSButton(title: "Add New", target: self, action: #selector(startNewHost))
-        addNew.bezelStyle = .rounded
         actionRow.addArrangedSubview(saveHostButton)
         actionRow.addArrangedSubview(cancelEditButton)
         actionRow.addArrangedSubview(removeHostButton)
         actionRow.addArrangedSubview(NSView())
-        actionRow.addArrangedSubview(addNew)
         formStack.addArrangedSubview(actionRow)
 
         hostsSection.addArrangedSubview(formCard)
@@ -1272,40 +1083,81 @@ final class SettingsViewController: NSViewController {
 
     private func buildAboutSection() {
         aboutSection.orientation = .vertical
-        aboutSection.spacing = 18
+        aboutSection.spacing = 16
         aboutSection.addArrangedSubview(pageTitle("About", symbolName: "info.circle.fill"))
-        let about = NSTextField(wrappingLabelWithString: "Bartainer is a compact macOS menu bar app for viewing local and remote Docker containers.")
-        about.font = .systemFont(ofSize: 14)
-        about.textColor = .secondaryLabelColor
-        let repo = NSTextField(labelWithString: "github.com/cobanov/bartainer")
-        repo.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        repo.textColor = .secondaryLabelColor
-        aboutSection.addArrangedSubview(about)
-        aboutSection.addArrangedSubview(repo)
+
+        let card = settingsCard()
+        let cardStack = NSStackView()
+        cardStack.orientation = .vertical
+        cardStack.spacing = 12
+        cardStack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        cardStack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(cardStack)
+        NSLayoutConstraint.activate([
+            cardStack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            cardStack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            cardStack.topAnchor.constraint(equalTo: card.topAnchor),
+            cardStack.bottomAnchor.constraint(equalTo: card.bottomAnchor)
+        ])
+
+        let appName = NSTextField(labelWithString: "Bartainer")
+        appName.font = .systemFont(ofSize: 18, weight: .semibold)
+
+        let desc = NSTextField(wrappingLabelWithString: "A compact macOS menu bar app for viewing local and remote Docker containers at a glance.")
+        desc.font = .systemFont(ofSize: 13)
+        desc.textColor = .secondaryLabelColor
+
+        let repoRow = NSStackView()
+        repoRow.orientation = .horizontal
+        repoRow.spacing = 6
+        let repoIcon = NSImageView(image: NSImage(systemSymbolName: "link", accessibilityDescription: nil) ?? NSImage())
+        repoIcon.symbolConfiguration = .init(pointSize: 11, weight: .regular)
+        repoIcon.contentTintColor = .secondaryLabelColor
+        repoIcon.translatesAutoresizingMaskIntoConstraints = false
+        repoIcon.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        let repoLabel = NSTextField(labelWithString: "github.com/cobanov/bartainer")
+        repoLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        repoLabel.textColor = .secondaryLabelColor
+        repoRow.addArrangedSubview(repoIcon)
+        repoRow.addArrangedSubview(repoLabel)
+
+        cardStack.addArrangedSubview(appName)
+        cardStack.addArrangedSubview(desc)
+        cardStack.addArrangedSubview(repoRow)
+
+        aboutSection.addArrangedSubview(card)
         aboutSection.addArrangedSubview(NSView())
     }
 
     private func renderHosts() {
-        hostListStack.arrangedSubviews.forEach { view in
-            hostListStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        hostListStack.arrangedSubviews.forEach { v in
+            hostListStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
         }
 
         let hosts = hostStore.load()
         guard !hosts.isEmpty else {
-            let empty = NSTextField(labelWithString: "No remote hosts yet.")
-            empty.textColor = .secondaryLabelColor
+            let emptyStack = NSStackView()
+            emptyStack.orientation = .vertical
+            emptyStack.alignment = .centerX
+            emptyStack.edgeInsets = NSEdgeInsets(top: 24, left: 16, bottom: 24, right: 16)
+            let empty = NSTextField(labelWithString: "No remote hosts added yet.")
+            empty.textColor = .tertiaryLabelColor
             empty.font = .systemFont(ofSize: 13)
-            hostListStack.addArrangedSubview(empty)
+            emptyStack.addArrangedSubview(empty)
+            hostListStack.addArrangedSubview(emptyStack)
             return
         }
 
         for index in hosts.indices {
             let row = HostRowView(host: hosts[index], index: index, isSelected: editingHostIndex == index)
-            row.onToggle = { [weak self] rowIndex, enabled in self?.setHost(rowIndex, enabled: enabled) }
-            row.onDelete = { [weak self] rowIndex in self?.deleteHost(rowIndex) }
-            row.onSelect = { [weak self] rowIndex in self?.editHost(rowIndex) }
+            row.onToggle = { [weak self] idx, enabled in self?.setHost(idx, enabled: enabled) }
+            row.onDelete = { [weak self] idx in self?.deleteHost(idx) }
+            row.onSelect = { [weak self] idx in self?.editHost(idx) }
             hostListStack.addArrangedSubview(row)
+            if index < hosts.count - 1 {
+                hostListStack.addArrangedSubview(rowSeparator())
+            }
         }
     }
 
@@ -1320,11 +1172,8 @@ final class SettingsViewController: NSViewController {
         generalButton.isSelected = section == .general
         hostsButton.isSelected = section == .hosts
         aboutButton.isSelected = section == .about
-        if section == .general {
-            syncLaunchAtLoginState()
-        } else if section == .hosts {
-            renderHosts()
-        }
+        if section == .general { syncLaunchAtLoginState() }
+        if section == .hosts { renderHosts() }
     }
 
     @objc private func startNewHost() {
@@ -1341,6 +1190,7 @@ final class SettingsViewController: NSViewController {
         let port = Int(portField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
         let password = passwordField.stringValue
         var hosts = hostStore.load()
+
         let host = DockerHost(
             name: name,
             address: address,
@@ -1379,7 +1229,7 @@ final class SettingsViewController: NSViewController {
         guard hosts.indices.contains(index) else { return }
         let host = hosts[index]
         editingHostIndex = index
-        formTitleLabel.stringValue = "Edit \(host.displayName)"
+        formTitleLabel.stringValue = "Edit Host — \(host.displayName)"
         saveHostButton.title = "Save Changes"
         cancelEditButton.isHidden = false
         removeHostButton.isHidden = false
@@ -1425,17 +1275,17 @@ final class SettingsViewController: NSViewController {
 
     private func syncLaunchAtLoginState() {
         if #available(macOS 13.0, *) {
-            launchAtLoginButton.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            launchAtLoginToggle.state = SMAppService.mainApp.status == .enabled ? .on : .off
         } else {
-            launchAtLoginButton.isEnabled = false
-            launchAtLoginButton.state = .off
+            launchAtLoginToggle.isEnabled = false
+            launchAtLoginToggle.state = .off
         }
     }
 
     @objc private func toggleLaunchAtLogin() {
         guard #available(macOS 13.0, *) else { return }
         do {
-            if launchAtLoginButton.state == .on {
+            if launchAtLoginToggle.state == .on {
                 if SMAppService.mainApp.status != .enabled {
                     try SMAppService.mainApp.register()
                 }
@@ -1443,7 +1293,7 @@ final class SettingsViewController: NSViewController {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            launchAtLoginButton.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            launchAtLoginToggle.state = SMAppService.mainApp.status == .enabled ? .on : .off
         }
     }
 
@@ -1451,35 +1301,55 @@ final class SettingsViewController: NSViewController {
         NSApp.terminate(nil)
     }
 
+    // MARK: - Helpers
+
     private func pageTitle(_ title: String, symbolName: String) -> NSView {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 12
+        stack.spacing = 10
+
         let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) ?? NSImage()
         image.isTemplate = true
         let icon = NSImageView(image: image)
-        icon.symbolConfiguration = .init(pointSize: 22, weight: .semibold)
+        icon.symbolConfiguration = .init(pointSize: 18, weight: .semibold)
+        icon.contentTintColor = .secondaryLabelColor
         icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.widthAnchor.constraint(equalToConstant: 34).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        icon.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 28).isActive = true
+
         let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 24, weight: .semibold)
+        label.font = .systemFont(ofSize: 20, weight: .semibold)
+
         stack.addArrangedSubview(icon)
         stack.addArrangedSubview(label)
         stack.addArrangedSubview(NSView())
         return stack
     }
 
-    private func settingRow(title: String, control: NSView) -> NSView {
+    private func settingRow(title: String, subtitle: String, control: NSView) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 12
-        row.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 14, right: 18)
-        let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 16, weight: .semibold)
-        row.addArrangedSubview(label)
+        row.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+
+        let textStack = NSStackView()
+        textStack.orientation = .vertical
+        textStack.spacing = 2
+        textStack.alignment = .leading
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .regular)
+
+        let subtitleLabel = NSTextField(labelWithString: subtitle)
+        subtitleLabel.font = .systemFont(ofSize: 11)
+        subtitleLabel.textColor = .tertiaryLabelColor
+
+        textStack.addArrangedSubview(titleLabel)
+        textStack.addArrangedSubview(subtitleLabel)
+
+        row.addArrangedSubview(textStack)
         row.addArrangedSubview(NSView())
         row.addArrangedSubview(control)
         return row
@@ -1488,10 +1358,10 @@ final class SettingsViewController: NSViewController {
     private func settingsCard() -> NSView {
         let card = NSView()
         card.wantsLayer = true
-        card.layer?.cornerRadius = 18
-        card.layer?.borderWidth = 1
-        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
-        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.34).cgColor
+        card.layer?.cornerRadius = 12
+        card.layer?.borderWidth = 0.5
+        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.5).cgColor
+        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
         return card
     }
 
@@ -1501,52 +1371,100 @@ final class SettingsViewController: NSViewController {
         return box
     }
 
-    private func label(_ text: String) -> NSTextField {
+    private func rowSeparator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return box
+    }
+
+    private func formLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 12)
         label.textColor = .secondaryLabelColor
+        label.alignment = .right
         return label
     }
 
-    private func sectionLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+    private func infoNote(_ text: String) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.spacing = 8
+
+        let icon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil) ?? NSImage())
+        icon.symbolConfiguration = .init(pointSize: 12, weight: .regular)
+        icon.contentTintColor = .systemOrange
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: 11.5)
         label.textColor = .secondaryLabelColor
-        return label
+
+        row.addArrangedSubview(icon)
+        row.addArrangedSubview(label)
+        return row
+    }
+
+    private func sidebarSectionLabel(_ text: String) -> NSView {
+        let wrapper = NSView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: text.uppercased())
+        label.font = .systemFont(ofSize: 10.5, weight: .semibold)
+        label.textColor = .tertiaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            label.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -2),
+            wrapper.widthAnchor.constraint(greaterThanOrEqualToConstant: 100)
+        ])
+
+        return wrapper
     }
 }
 
 @MainActor
 final class SettingsSidebarButton: NSButton {
     var isSelected: Bool = false {
-        didSet { updateSelectionStyle() }
+        didSet { updateStyle() }
     }
 
     init(title: String, symbolName: String) {
+        super.init(frame: .zero)
         let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) ?? NSImage()
         image.isTemplate = true
-        super.init(frame: .zero)
-        self.title = title
+        self.title = "  \(title)"
         self.image = image
         imagePosition = .imageLeading
         alignment = .left
         isBordered = false
-        font = .systemFont(ofSize: 16, weight: .semibold)
+        font = .systemFont(ofSize: 13.5, weight: .regular)
         contentTintColor = .labelColor
         wantsLayer = true
-        layer?.cornerRadius = 12
+        layer?.cornerRadius = 8
         translatesAutoresizingMaskIntoConstraints = false
-        heightAnchor.constraint(equalToConstant: 54).isActive = true
-        updateSelectionStyle()
+        heightAnchor.constraint(equalToConstant: 38).isActive = true
+        updateStyle()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private func updateSelectionStyle() {
+    private func updateStyle() {
         layer?.backgroundColor = isSelected
-            ? NSColor.controlBackgroundColor.withAlphaComponent(0.62).cgColor
+            ? NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
             : NSColor.clear.cgColor
+        font = .systemFont(ofSize: 13.5, weight: isSelected ? .semibold : .regular)
+        contentTintColor = isSelected ? .controlAccentColor : .labelColor
     }
 }
 
@@ -1556,13 +1474,16 @@ final class HostRowView: NSView {
     var onDelete: ((Int) -> Void)?
     var onSelect: ((Int) -> Void)?
     private let index: Int
-    private let enabledButton: NSButton
     private let isSelected: Bool
+    private var host: DockerHost
+    private let statusDot = NSView()
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false
 
     init(host: DockerHost, index: Int, isSelected: Bool) {
         self.index = index
         self.isSelected = isSelected
-        self.enabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+        self.host = host
         super.init(frame: .zero)
         build(host: host)
     }
@@ -1573,50 +1494,72 @@ final class HostRowView: NSView {
 
     private func build(host: DockerHost) {
         wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.borderWidth = isSelected ? 1 : 0
-        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.7).cgColor
-        layer?.backgroundColor = (isSelected ? NSColor.controlAccentColor : NSColor.controlBackgroundColor)
-            .withAlphaComponent(isSelected ? 0.18 : 0.42)
-            .cgColor
+        updateBackground()
 
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 14, bottom: 0, right: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
-        enabledButton.state = host.enabled ? .on : .off
-        enabledButton.target = self
-        enabledButton.action = #selector(toggle)
+        // Status dot (clickable to toggle)
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 4
+        statusDot.layer?.backgroundColor = dotColor(for: host.enabled).cgColor
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+
+        let dotButton = NSButton(frame: .zero)
+        dotButton.isBordered = false
+        dotButton.bezelStyle = .regularSquare
+        dotButton.target = self
+        dotButton.action = #selector(toggleEnabled)
+        dotButton.wantsLayer = true
+        dotButton.layer?.backgroundColor = NSColor.clear.cgColor
+        dotButton.translatesAutoresizingMaskIntoConstraints = false
+        dotButton.addSubview(statusDot)
+        NSLayoutConstraint.activate([
+            dotButton.widthAnchor.constraint(equalToConstant: 20),
+            dotButton.heightAnchor.constraint(equalToConstant: 20),
+            statusDot.widthAnchor.constraint(equalToConstant: 8),
+            statusDot.heightAnchor.constraint(equalToConstant: 8),
+            statusDot.centerXAnchor.constraint(equalTo: dotButton.centerXAnchor),
+            statusDot.centerYAnchor.constraint(equalTo: dotButton.centerYAnchor)
+        ])
+
+        // Text
+        let textStack = NSStackView()
+        textStack.orientation = .vertical
+        textStack.spacing = 1
+        textStack.alignment = .leading
 
         let name = NSTextField(labelWithString: host.displayName)
-        name.font = .systemFont(ofSize: 13, weight: .semibold)
+        name.font = .systemFont(ofSize: 13, weight: .medium)
         name.lineBreakMode = .byTruncatingTail
 
         let auth = (host.password?.isEmpty == false) ? "password" : "key"
-        let status = host.enabled ? "enabled" : "disabled"
-        let target = NSTextField(labelWithString: "\(host.sshTarget):\(host.port) - \(auth) - \(status)")
-        target.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        target.textColor = .secondaryLabelColor
-        target.lineBreakMode = .byTruncatingMiddle
+        let detail = NSTextField(labelWithString: "\(host.sshTarget):\(host.port) · \(auth)")
+        detail.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingMiddle
 
-        let deleteImage = NSImage(systemSymbolName: "trash", accessibilityDescription: "Delete") ?? NSImage()
-        deleteImage.isTemplate = true
-        let deleteButton = NSButton(image: deleteImage, target: self, action: #selector(deleteHost))
-        deleteButton.isBordered = false
-        deleteButton.toolTip = "Delete"
+        textStack.addArrangedSubview(name)
+        textStack.addArrangedSubview(detail)
 
-        stack.addArrangedSubview(enabledButton)
-        stack.addArrangedSubview(name)
-        stack.addArrangedSubview(target)
+        // Delete button
+        let deleteBtn = makeActionButton(symbolName: "trash", tooltip: "Remove Host")
+        deleteBtn.target = self
+        deleteBtn.action = #selector(deleteHost)
+        deleteBtn.contentTintColor = .systemRed
+
+        stack.addArrangedSubview(dotButton)
+        stack.addArrangedSubview(textStack)
         stack.addArrangedSubview(NSView())
-        stack.addArrangedSubview(deleteButton)
+        stack.addArrangedSubview(deleteBtn)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 42),
+            heightAnchor.constraint(equalToConstant: 50),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
@@ -1624,8 +1567,57 @@ final class HostRowView: NSView {
         ])
     }
 
-    @objc private func toggle() {
-        onToggle?(index, enabledButton.state == .on)
+    private func makeActionButton(symbolName: String, tooltip: String) -> NSButton {
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: tooltip) ?? NSImage()
+        image.isTemplate = true
+        let button = NSButton(image: image, target: nil, action: nil)
+        button.isBordered = false
+        button.toolTip = tooltip
+        button.controlSize = .small
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        return button
+    }
+
+    private func dotColor(for enabled: Bool) -> NSColor {
+        enabled ? .systemGreen : .tertiaryLabelColor
+    }
+
+    private func updateBackground() {
+        if isSelected {
+            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.08).cgColor
+        } else if isHovered {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.5).cgColor
+        } else {
+            layer?.backgroundColor = NSColor.clear.cgColor
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil
+        )
+        trackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateBackground()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateBackground()
+    }
+
+    @objc private func toggleEnabled() {
+        onToggle?(index, !host.enabled)
     }
 
     @objc private func deleteHost() {
@@ -1636,6 +1628,8 @@ final class HostRowView: NSView {
         onSelect?(index)
     }
 }
+
+// MARK: - Docker Data Models
 
 struct DockerContainer: Decodable, Sendable {
     var host = "local"
@@ -1672,7 +1666,7 @@ struct DockerContainer: Decodable, Sendable {
     }
 
     var stateDisplay: String {
-        "[\(state.uppercased())]"
+        state.uppercased()
     }
 
     var portsDisplay: String {
@@ -1766,7 +1760,6 @@ final class HostStore {
               let hosts = try? JSONDecoder().decode([DockerHost].self, from: data) else {
             return []
         }
-
         return hosts
     }
 
@@ -1775,6 +1768,8 @@ final class HostStore {
         UserDefaults.standard.set(data, forKey: key)
     }
 }
+
+// MARK: - Docker Service
 
 enum DockerError: Error, Sendable {
     case dockerNotFound
@@ -1932,12 +1927,7 @@ final class DockerService: @unchecked Sendable {
     }
 
     private func findSSHPath() -> String? {
-        let candidates = [
-            "/usr/bin/ssh",
-            "/opt/homebrew/bin/ssh",
-            "/usr/local/bin/ssh"
-        ]
-
+        let candidates = ["/usr/bin/ssh", "/opt/homebrew/bin/ssh", "/usr/local/bin/ssh"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
@@ -1947,12 +1937,7 @@ final class DockerService: @unchecked Sendable {
     }
 
     private func findDockerPath() -> String? {
-        let candidates = [
-            "/opt/homebrew/bin/docker",
-            "/usr/local/bin/docker",
-            "/usr/bin/docker"
-        ]
-
+        let candidates = ["/opt/homebrew/bin/docker", "/usr/local/bin/docker", "/usr/bin/docker"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 }
