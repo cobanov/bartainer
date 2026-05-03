@@ -29,6 +29,7 @@ Each remote host supports:
 - SSH port
 - Password, temporarily stored plainly for testing
 - Enabled/disabled state
+- Inline edit and remove controls
 
 Bartainer reads remote Docker state over SSH:
 

@@ -117,10 +117,15 @@ final class ContainerViewController: NSViewController {
     private let userField = NSTextField()
     private let portField = NSTextField(string: "22")
     private let passwordField = NSSecureTextField()
+    private let formTitleLabel = NSTextField(labelWithString: "Add Remote Host")
+    private let saveHostButton = NSButton(title: "Add Host", target: nil, action: nil)
+    private let cancelEditButton = NSButton(title: "Cancel", target: nil, action: nil)
+    private let removeHostButton = NSButton(title: "Remove", target: nil, action: nil)
     private var scrollHeightConstraint: NSLayoutConstraint?
     private var contentHeightConstraint: NSLayoutConstraint?
     private var refreshTimer: Timer?
     private var isRefreshing = false
+    private var editingHostIndex: Int?
     var onContentHeightChange: ((CGFloat) -> Void)?
 
     init(service: DockerService) {
@@ -440,6 +445,22 @@ final class ContainerViewController: NSViewController {
         hostsSection.spacing = 10
         hostsSection.edgeInsets = NSEdgeInsets(top: 12, left: 10, bottom: 10, right: 10)
 
+        let topRow = NSStackView()
+        topRow.orientation = .horizontal
+        topRow.alignment = .centerY
+        topRow.spacing = 8
+
+        let title = NSTextField(labelWithString: "Remote Hosts")
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        let newButton = NSButton(title: "Add New", target: self, action: #selector(startNewHost))
+        newButton.bezelStyle = .rounded
+
+        topRow.addArrangedSubview(title)
+        topRow.addArrangedSubview(NSView())
+        topRow.addArrangedSubview(newButton)
+        hostsSection.addArrangedSubview(topRow)
+
         hostListStack.orientation = .vertical
         hostListStack.spacing = 6
 
@@ -452,12 +473,15 @@ final class ContainerViewController: NSViewController {
         hostsSection.addArrangedSubview(hostScrollView)
 
         NSLayoutConstraint.activate([
-            hostScrollView.heightAnchor.constraint(equalToConstant: 176),
+            hostScrollView.heightAnchor.constraint(equalToConstant: 144),
             hostListStack.leadingAnchor.constraint(equalTo: hostScrollView.contentView.leadingAnchor),
             hostListStack.trailingAnchor.constraint(equalTo: hostScrollView.contentView.trailingAnchor),
             hostListStack.topAnchor.constraint(equalTo: hostScrollView.contentView.topAnchor),
             hostListStack.widthAnchor.constraint(equalTo: hostScrollView.contentView.widthAnchor)
         ])
+
+        formTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        hostsSection.addArrangedSubview(formTitleLabel)
 
         let form = NSGridView(views: [
             [label("Name"), nameField],
@@ -477,9 +501,29 @@ final class ContainerViewController: NSViewController {
         portField.placeholderString = "22"
         passwordField.placeholderString = "temporary plain password"
 
-        let addButton = NSButton(title: "Add Host", target: self, action: #selector(addHost))
-        addButton.bezelStyle = .rounded
-        hostsSection.addArrangedSubview(addButton)
+        saveHostButton.target = self
+        saveHostButton.action = #selector(saveHost)
+        saveHostButton.bezelStyle = .rounded
+
+        cancelEditButton.target = self
+        cancelEditButton.action = #selector(cancelHostEdit)
+        cancelEditButton.bezelStyle = .rounded
+
+        removeHostButton.target = self
+        removeHostButton.action = #selector(removeSelectedHost)
+        removeHostButton.bezelStyle = .rounded
+
+        let actionRow = NSStackView()
+        actionRow.orientation = .horizontal
+        actionRow.alignment = .centerY
+        actionRow.spacing = 8
+        actionRow.addArrangedSubview(saveHostButton)
+        actionRow.addArrangedSubview(cancelEditButton)
+        actionRow.addArrangedSubview(removeHostButton)
+        actionRow.addArrangedSubview(NSView())
+        hostsSection.addArrangedSubview(actionRow)
+
+        resetHostForm()
     }
 
     private func renderHosts() {
@@ -498,18 +542,25 @@ final class ContainerViewController: NSViewController {
         }
 
         for index in hosts.indices {
-            let row = HostRowView(host: hosts[index], index: index)
+            let row = HostRowView(host: hosts[index], index: index, isSelected: editingHostIndex == index)
             row.onToggle = { [weak self] rowIndex, enabled in
                 self?.setHost(rowIndex, enabled: enabled)
             }
             row.onDelete = { [weak self] rowIndex in
                 self?.deleteHost(rowIndex)
             }
+            row.onSelect = { [weak self] rowIndex in
+                self?.editHost(rowIndex)
+            }
             hostListStack.addArrangedSubview(row)
         }
     }
 
-    @objc private func addHost() {
+    @objc private func startNewHost() {
+        resetHostForm()
+    }
+
+    @objc private func saveHost() {
         let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !address.isEmpty else { return }
 
@@ -519,22 +570,68 @@ final class ContainerViewController: NSViewController {
         let password = passwordField.stringValue
         var hosts = hostStore.load()
 
-        hosts.append(DockerHost(
+        let host = DockerHost(
             name: name,
             address: address,
             user: user.isEmpty ? NSUserName() : user,
             port: max(port, 1),
             enabled: true,
             password: password.isEmpty ? nil : password
-        ))
-        hostStore.save(hosts)
+        )
 
+        if let editingHostIndex, hosts.indices.contains(editingHostIndex) {
+            var updated = host
+            updated.enabled = hosts[editingHostIndex].enabled
+            hosts[editingHostIndex] = updated
+        } else {
+            hosts.append(host)
+        }
+
+        hostStore.save(hosts)
+        resetHostForm()
+        renderHosts()
+        refresh()
+        summaryLabel.stringValue = "\(hosts.count) remote hosts"
+    }
+
+    @objc private func cancelHostEdit() {
+        resetHostForm()
+        renderHosts()
+    }
+
+    @objc private func removeSelectedHost() {
+        guard let editingHostIndex else { return }
+        deleteHost(editingHostIndex)
+    }
+
+    private func editHost(_ index: Int) {
+        let hosts = hostStore.load()
+        guard hosts.indices.contains(index) else { return }
+        let host = hosts[index]
+        editingHostIndex = index
+        formTitleLabel.stringValue = "Edit \(host.displayName)"
+        saveHostButton.title = "Save Changes"
+        cancelEditButton.isHidden = false
+        removeHostButton.isHidden = false
+        nameField.stringValue = host.name
+        addressField.stringValue = host.address
+        userField.stringValue = host.user
+        portField.stringValue = "\(host.port)"
+        passwordField.stringValue = host.password ?? ""
+        renderHosts()
+    }
+
+    private func resetHostForm() {
+        editingHostIndex = nil
+        formTitleLabel.stringValue = "Add Remote Host"
+        saveHostButton.title = "Add Host"
+        cancelEditButton.isHidden = true
+        removeHostButton.isHidden = true
         nameField.stringValue = ""
         addressField.stringValue = ""
         userField.stringValue = ""
         portField.stringValue = "22"
         passwordField.stringValue = ""
-        showTab(index: 2)
     }
 
     private func setHost(_ index: Int, enabled: Bool) {
@@ -550,7 +647,10 @@ final class ContainerViewController: NSViewController {
         guard hosts.indices.contains(index) else { return }
         hosts.remove(at: index)
         hostStore.save(hosts)
-        showTab(index: 2)
+        resetHostForm()
+        renderHosts()
+        refresh()
+        summaryLabel.stringValue = "\(hosts.count) remote hosts"
     }
 
     private func label(_ text: String) -> NSTextField {
@@ -876,11 +976,14 @@ final class FlippedStackView: NSStackView {
 final class HostRowView: NSView {
     var onToggle: ((Int, Bool) -> Void)?
     var onDelete: ((Int) -> Void)?
+    var onSelect: ((Int) -> Void)?
     private let index: Int
     private let enabledButton: NSButton
+    private let isSelected: Bool
 
-    init(host: DockerHost, index: Int) {
+    init(host: DockerHost, index: Int, isSelected: Bool) {
         self.index = index
+        self.isSelected = isSelected
         self.enabledButton = NSButton(checkboxWithTitle: "", target: nil, action: nil)
         super.init(frame: .zero)
         build(host: host)
@@ -893,7 +996,11 @@ final class HostRowView: NSView {
     private func build(host: DockerHost) {
         wantsLayer = true
         layer?.cornerRadius = 8
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.42).cgColor
+        layer?.borderWidth = isSelected ? 1 : 0
+        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.7).cgColor
+        layer?.backgroundColor = (isSelected ? NSColor.controlAccentColor : NSColor.controlBackgroundColor)
+            .withAlphaComponent(isSelected ? 0.18 : 0.42)
+            .cgColor
 
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -909,9 +1016,11 @@ final class HostRowView: NSView {
 
         let name = NSTextField(labelWithString: host.displayName)
         name.font = .systemFont(ofSize: 13, weight: .semibold)
+        name.lineBreakMode = .byTruncatingTail
 
         let auth = (host.password?.isEmpty == false) ? "password" : "key"
-        let target = NSTextField(labelWithString: "\(host.sshTarget):\(host.port) - \(auth)")
+        let status = host.enabled ? "enabled" : "disabled"
+        let target = NSTextField(labelWithString: "\(host.sshTarget):\(host.port) - \(auth) - \(status)")
         target.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         target.textColor = .secondaryLabelColor
         target.lineBreakMode = .byTruncatingMiddle
@@ -943,6 +1052,10 @@ final class HostRowView: NSView {
 
     @objc private func deleteHost() {
         onDelete?(index)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onSelect?(index)
     }
 }
 
