@@ -822,6 +822,7 @@ final class HoverTooltip {
     static let shared = HoverTooltip()
     private let panel: NSPanel
     private let label: NSTextField
+    private weak var parentWindow: NSWindow?
 
     private init() {
         panel = NSPanel(
@@ -833,8 +834,9 @@ final class HoverTooltip {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.level = .floating
+        panel.level = .statusBar
         panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         let glass = NSVisualEffectView()
         glass.material = .hudWindow
@@ -872,14 +874,48 @@ final class HoverTooltip {
         guard let window = view.window else { return }
         let cellFrame = view.convert(view.bounds, to: nil)
         let screenFrame = window.convertToScreen(cellFrame)
-        let origin = NSPoint(x: screenFrame.minX, y: screenFrame.maxY + 6)
+        let origin = adjustedOrigin(
+            preferred: NSPoint(x: screenFrame.minX, y: screenFrame.maxY + 8),
+            size: NSSize(width: width, height: height),
+            screen: window.screen
+        )
 
         panel.setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
-        panel.orderFront(nil)
+
+        if parentWindow !== window {
+            parentWindow?.removeChildWindow(panel)
+            window.addChildWindow(panel, ordered: .above)
+            parentWindow = window
+        }
+
+        panel.orderFrontRegardless()
     }
 
     func hide() {
+        parentWindow?.removeChildWindow(panel)
+        parentWindow = nil
         panel.orderOut(nil)
+    }
+
+    private func adjustedOrigin(preferred: NSPoint, size: NSSize, screen: NSScreen?) -> NSPoint {
+        guard let visibleFrame = screen?.visibleFrame else {
+            return preferred
+        }
+
+        var origin = preferred
+        if origin.x + size.width > visibleFrame.maxX - 8 {
+            origin.x = visibleFrame.maxX - size.width - 8
+        }
+        if origin.x < visibleFrame.minX + 8 {
+            origin.x = visibleFrame.minX + 8
+        }
+        if origin.y + size.height > visibleFrame.maxY - 8 {
+            origin.y = preferred.y - size.height - 42
+        }
+        if origin.y < visibleFrame.minY + 8 {
+            origin.y = visibleFrame.minY + 8
+        }
+        return origin
     }
 }
 
