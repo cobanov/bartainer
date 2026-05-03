@@ -101,7 +101,6 @@ final class ContainerViewController: NSViewController {
     private let service: DockerService
     private let hostStore = HostStore()
     private let rootStack = NSStackView()
-    private let tabControl = NSSegmentedControl(labels: ["Containers", "General", "Hosts"], trackingMode: .selectOne, target: nil, action: nil)
     private let contentStack = NSStackView()
     private let containerSection = NSStackView()
     private let generalSection = NSStackView()
@@ -224,12 +223,6 @@ final class ContainerViewController: NSViewController {
         scrollHeightConstraint?.isActive = true
         contentStack.addArrangedSubview(containerSection)
 
-        buildGeneralSection()
-        buildHostsSection()
-        contentStack.addArrangedSubview(generalSection)
-        contentStack.addArrangedSubview(hostsSection)
-        showTab(index: 0)
-
         NSLayoutConstraint.activate([
             rowsStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             rowsStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
@@ -248,11 +241,6 @@ final class ContainerViewController: NSViewController {
         let title = NSTextField(labelWithString: "Bartainer")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
 
-        tabControl.selectedSegment = 0
-        tabControl.controlSize = .small
-        tabControl.target = self
-        tabControl.action = #selector(changeTab)
-
         summaryLabel.font = .systemFont(ofSize: 12, weight: .regular)
         summaryLabel.textColor = .secondaryLabelColor
 
@@ -261,14 +249,15 @@ final class ContainerViewController: NSViewController {
         spinner.isDisplayedWhenStopped = false
 
         let refreshButton = iconButton(symbolName: "arrow.clockwise", action: #selector(refreshFromButton))
+        let settingsButton = iconButton(symbolName: "gearshape", action: #selector(openSettings))
         let quitButton = iconButton(symbolName: "power", action: #selector(quit))
 
         toolbar.addArrangedSubview(title)
-        toolbar.addArrangedSubview(tabControl)
         toolbar.addArrangedSubview(summaryLabel)
         toolbar.addArrangedSubview(NSView())
         toolbar.addArrangedSubview(spinner)
         toolbar.addArrangedSubview(refreshButton)
+        toolbar.addArrangedSubview(settingsButton)
         toolbar.addArrangedSubview(quitButton)
 
         return toolbar
@@ -363,12 +352,14 @@ final class ContainerViewController: NSViewController {
         refresh()
     }
 
-    @objc private func changeTab() {
-        showTab(index: tabControl.selectedSegment)
-    }
-
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func openSettings() {
+        SettingsWindowController.shared.show(hostStore: hostStore) { [weak self] in
+            self?.refresh()
+        }
     }
 
     private func iconButton(symbolName: String, action: Selector) -> NSButton {
@@ -380,7 +371,7 @@ final class ContainerViewController: NSViewController {
         button.isBordered = false
         button.imagePosition = .imageOnly
         button.controlSize = .small
-        button.toolTip = symbolName == "power" ? "Quit" : "Refresh"
+        button.toolTip = symbolName == "power" ? "Quit" : (symbolName == "gearshape" ? "Settings" : "Refresh")
         button.translatesAutoresizingMaskIntoConstraints = false
         button.widthAnchor.constraint(equalToConstant: 24).isActive = true
         button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -392,9 +383,7 @@ final class ContainerViewController: NSViewController {
         let rowHeight: CGFloat = emptyOrError ? 58 : 30
         let scrollHeight = CGFloat(visibleRows) * rowHeight
         scrollHeightConstraint?.constant = scrollHeight
-        if tabControl.selectedSegment == 0 {
-            onContentHeightChange?(emptyOrError ? 138 : min(382, 82 + scrollHeight))
-        }
+        onContentHeightChange?(emptyOrError ? 138 : min(382, 82 + scrollHeight))
     }
 
     private func showTab(index: Int) {
@@ -969,6 +958,559 @@ final class EmptyStateView: NSView {
 final class FlippedStackView: NSStackView {
     override var isFlipped: Bool {
         true
+    }
+}
+
+@MainActor
+final class SettingsWindowController: NSWindowController {
+    static let shared = SettingsWindowController()
+    private var settingsViewController: SettingsViewController?
+
+    private init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Bartainer Settings"
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.center()
+        super.init(window: window)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func show(hostStore: HostStore, onChange: @escaping () -> Void) {
+        let controller = SettingsViewController(hostStore: hostStore, onChange: onChange)
+        settingsViewController = controller
+        window?.contentViewController = controller
+        window?.center()
+        showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+@MainActor
+final class SettingsViewController: NSViewController {
+    private enum Section {
+        case general
+        case hosts
+        case about
+    }
+
+    private let hostStore: HostStore
+    private let onChange: () -> Void
+    private let generalButton = SettingsSidebarButton(title: "General", symbolName: "gearshape.fill")
+    private let hostsButton = SettingsSidebarButton(title: "Hosts", symbolName: "server.rack")
+    private let aboutButton = SettingsSidebarButton(title: "About", symbolName: "info.circle.fill")
+    private let generalSection = NSStackView()
+    private let hostsSection = NSStackView()
+    private let aboutSection = NSStackView()
+    private let hostListStack = FlippedStackView()
+    private let launchAtLoginButton = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
+    private let nameField = NSTextField()
+    private let addressField = NSTextField()
+    private let userField = NSTextField()
+    private let portField = NSTextField(string: "22")
+    private let passwordField = NSSecureTextField()
+    private let formTitleLabel = NSTextField(labelWithString: "Add Remote Host")
+    private let saveHostButton = NSButton(title: "Add Host", target: nil, action: nil)
+    private let cancelEditButton = NSButton(title: "Cancel", target: nil, action: nil)
+    private let removeHostButton = NSButton(title: "Remove", target: nil, action: nil)
+    private var editingHostIndex: Int?
+
+    init(hostStore: HostStore, onChange: @escaping () -> Void) {
+        self.hostStore = hostStore
+        self.onChange = onChange
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        let glass = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 900, height: 640))
+        glass.material = .hudWindow
+        glass.blendingMode = .behindWindow
+        glass.state = .active
+        view = glass
+        buildView()
+        select(.general)
+    }
+
+    private func buildView() {
+        let root = NSStackView()
+        root.orientation = .horizontal
+        root.spacing = 0
+        root.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(root)
+
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            root.topAnchor.constraint(equalTo: view.topAnchor),
+            root.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+
+        root.addArrangedSubview(sidebar())
+
+        let content = NSStackView()
+        content.orientation = .vertical
+        content.spacing = 0
+        content.edgeInsets = NSEdgeInsets(top: 34, left: 34, bottom: 34, right: 34)
+        root.addArrangedSubview(content)
+
+        buildGeneralSection()
+        buildHostsSection()
+        buildAboutSection()
+        content.addArrangedSubview(generalSection)
+        content.addArrangedSubview(hostsSection)
+        content.addArrangedSubview(aboutSection)
+    }
+
+    private func sidebar() -> NSView {
+        let sidebar = NSVisualEffectView()
+        sidebar.material = .sidebar
+        sidebar.blendingMode = .withinWindow
+        sidebar.state = .active
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.widthAnchor.constraint(equalToConstant: 300).isActive = true
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 84, left: 18, bottom: 24, right: 18)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: sidebar.topAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: sidebar.bottomAnchor)
+        ])
+
+        generalButton.target = self
+        generalButton.action = #selector(selectGeneral)
+        hostsButton.target = self
+        hostsButton.action = #selector(selectHosts)
+        aboutButton.target = self
+        aboutButton.action = #selector(selectAbout)
+
+        stack.addArrangedSubview(generalButton)
+        stack.addArrangedSubview(sectionLabel("Settings"))
+        stack.addArrangedSubview(hostsButton)
+        stack.addArrangedSubview(sectionLabel("Bartainer"))
+        stack.addArrangedSubview(aboutButton)
+        stack.addArrangedSubview(NSView())
+        return sidebar
+    }
+
+    private func buildGeneralSection() {
+        generalSection.orientation = .vertical
+        generalSection.spacing = 18
+        generalSection.addArrangedSubview(pageTitle("General", symbolName: "gearshape.fill"))
+
+        launchAtLoginButton.target = self
+        launchAtLoginButton.action = #selector(toggleLaunchAtLogin)
+
+        let card = settingsCard()
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: card.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor)
+        ])
+
+        let quitButton = NSButton(title: "Quit", target: self, action: #selector(quit))
+        quitButton.bezelStyle = .rounded
+        stack.addArrangedSubview(settingRow(title: "Launch at login", control: launchAtLoginButton))
+        stack.addArrangedSubview(separator())
+        stack.addArrangedSubview(settingRow(title: "Quit Bartainer", control: quitButton))
+
+        let note = NSTextField(wrappingLabelWithString: "Remote host passwords are temporarily stored plainly for testing. Next step: move them to macOS Keychain.")
+        note.font = .systemFont(ofSize: 12)
+        note.textColor = .secondaryLabelColor
+
+        generalSection.addArrangedSubview(card)
+        generalSection.addArrangedSubview(note)
+        generalSection.addArrangedSubview(NSView())
+    }
+
+    private func buildHostsSection() {
+        hostsSection.orientation = .vertical
+        hostsSection.spacing = 14
+        hostsSection.addArrangedSubview(pageTitle("Hosts", symbolName: "server.rack"))
+
+        hostListStack.orientation = .vertical
+        hostListStack.spacing = 8
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.documentView = hostListStack
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        hostsSection.addArrangedSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.heightAnchor.constraint(equalToConstant: 190),
+            hostListStack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            hostListStack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            hostListStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            hostListStack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+        ])
+
+        let formCard = settingsCard()
+        let formStack = NSStackView()
+        formStack.orientation = .vertical
+        formStack.spacing = 12
+        formStack.edgeInsets = NSEdgeInsets(top: 16, left: 18, bottom: 16, right: 18)
+        formStack.translatesAutoresizingMaskIntoConstraints = false
+        formCard.addSubview(formStack)
+
+        NSLayoutConstraint.activate([
+            formStack.leadingAnchor.constraint(equalTo: formCard.leadingAnchor),
+            formStack.trailingAnchor.constraint(equalTo: formCard.trailingAnchor),
+            formStack.topAnchor.constraint(equalTo: formCard.topAnchor),
+            formStack.bottomAnchor.constraint(equalTo: formCard.bottomAnchor)
+        ])
+
+        formTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        formStack.addArrangedSubview(formTitleLabel)
+
+        let form = NSGridView(views: [
+            [label("Name"), nameField],
+            [label("Address"), addressField],
+            [label("User"), userField],
+            [label("Port"), portField],
+            [label("Password"), passwordField]
+        ])
+        form.column(at: 0).width = 78
+        form.rowSpacing = 7
+        form.columnSpacing = 12
+        formStack.addArrangedSubview(form)
+
+        nameField.placeholderString = "home-server"
+        addressField.placeholderString = "100.124.170.43"
+        userField.placeholderString = NSUserName()
+        portField.placeholderString = "22"
+        passwordField.placeholderString = "temporary plain password"
+
+        saveHostButton.target = self
+        saveHostButton.action = #selector(saveHost)
+        saveHostButton.bezelStyle = .rounded
+        cancelEditButton.target = self
+        cancelEditButton.action = #selector(cancelHostEdit)
+        cancelEditButton.bezelStyle = .rounded
+        removeHostButton.target = self
+        removeHostButton.action = #selector(removeSelectedHost)
+        removeHostButton.bezelStyle = .rounded
+
+        let actionRow = NSStackView()
+        actionRow.orientation = .horizontal
+        actionRow.spacing = 8
+        let addNew = NSButton(title: "Add New", target: self, action: #selector(startNewHost))
+        addNew.bezelStyle = .rounded
+        actionRow.addArrangedSubview(saveHostButton)
+        actionRow.addArrangedSubview(cancelEditButton)
+        actionRow.addArrangedSubview(removeHostButton)
+        actionRow.addArrangedSubview(NSView())
+        actionRow.addArrangedSubview(addNew)
+        formStack.addArrangedSubview(actionRow)
+
+        hostsSection.addArrangedSubview(formCard)
+        hostsSection.addArrangedSubview(NSView())
+        resetHostForm()
+    }
+
+    private func buildAboutSection() {
+        aboutSection.orientation = .vertical
+        aboutSection.spacing = 18
+        aboutSection.addArrangedSubview(pageTitle("About", symbolName: "info.circle.fill"))
+        let about = NSTextField(wrappingLabelWithString: "Bartainer is a compact macOS menu bar app for viewing local and remote Docker containers.")
+        about.font = .systemFont(ofSize: 14)
+        about.textColor = .secondaryLabelColor
+        let repo = NSTextField(labelWithString: "github.com/cobanov/bartainer")
+        repo.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        repo.textColor = .secondaryLabelColor
+        aboutSection.addArrangedSubview(about)
+        aboutSection.addArrangedSubview(repo)
+        aboutSection.addArrangedSubview(NSView())
+    }
+
+    private func renderHosts() {
+        hostListStack.arrangedSubviews.forEach { view in
+            hostListStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        let hosts = hostStore.load()
+        guard !hosts.isEmpty else {
+            let empty = NSTextField(labelWithString: "No remote hosts yet.")
+            empty.textColor = .secondaryLabelColor
+            empty.font = .systemFont(ofSize: 13)
+            hostListStack.addArrangedSubview(empty)
+            return
+        }
+
+        for index in hosts.indices {
+            let row = HostRowView(host: hosts[index], index: index, isSelected: editingHostIndex == index)
+            row.onToggle = { [weak self] rowIndex, enabled in self?.setHost(rowIndex, enabled: enabled) }
+            row.onDelete = { [weak self] rowIndex in self?.deleteHost(rowIndex) }
+            row.onSelect = { [weak self] rowIndex in self?.editHost(rowIndex) }
+            hostListStack.addArrangedSubview(row)
+        }
+    }
+
+    @objc private func selectGeneral() { select(.general) }
+    @objc private func selectHosts() { select(.hosts) }
+    @objc private func selectAbout() { select(.about) }
+
+    private func select(_ section: Section) {
+        generalSection.isHidden = section != .general
+        hostsSection.isHidden = section != .hosts
+        aboutSection.isHidden = section != .about
+        generalButton.isSelected = section == .general
+        hostsButton.isSelected = section == .hosts
+        aboutButton.isSelected = section == .about
+        if section == .general {
+            syncLaunchAtLoginState()
+        } else if section == .hosts {
+            renderHosts()
+        }
+    }
+
+    @objc private func startNewHost() {
+        resetHostForm()
+        renderHosts()
+    }
+
+    @objc private func saveHost() {
+        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else { return }
+
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let user = userField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = Int(portField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 22
+        let password = passwordField.stringValue
+        var hosts = hostStore.load()
+        let host = DockerHost(
+            name: name,
+            address: address,
+            user: user.isEmpty ? NSUserName() : user,
+            port: max(port, 1),
+            enabled: true,
+            password: password.isEmpty ? nil : password
+        )
+
+        if let editingHostIndex, hosts.indices.contains(editingHostIndex) {
+            var updated = host
+            updated.enabled = hosts[editingHostIndex].enabled
+            hosts[editingHostIndex] = updated
+        } else {
+            hosts.append(host)
+        }
+
+        hostStore.save(hosts)
+        resetHostForm()
+        renderHosts()
+        onChange()
+    }
+
+    @objc private func cancelHostEdit() {
+        resetHostForm()
+        renderHosts()
+    }
+
+    @objc private func removeSelectedHost() {
+        guard let editingHostIndex else { return }
+        deleteHost(editingHostIndex)
+    }
+
+    private func editHost(_ index: Int) {
+        let hosts = hostStore.load()
+        guard hosts.indices.contains(index) else { return }
+        let host = hosts[index]
+        editingHostIndex = index
+        formTitleLabel.stringValue = "Edit \(host.displayName)"
+        saveHostButton.title = "Save Changes"
+        cancelEditButton.isHidden = false
+        removeHostButton.isHidden = false
+        nameField.stringValue = host.name
+        addressField.stringValue = host.address
+        userField.stringValue = host.user
+        portField.stringValue = "\(host.port)"
+        passwordField.stringValue = host.password ?? ""
+        renderHosts()
+    }
+
+    private func resetHostForm() {
+        editingHostIndex = nil
+        formTitleLabel.stringValue = "Add Remote Host"
+        saveHostButton.title = "Add Host"
+        cancelEditButton.isHidden = true
+        removeHostButton.isHidden = true
+        nameField.stringValue = ""
+        addressField.stringValue = ""
+        userField.stringValue = ""
+        portField.stringValue = "22"
+        passwordField.stringValue = ""
+    }
+
+    private func setHost(_ index: Int, enabled: Bool) {
+        var hosts = hostStore.load()
+        guard hosts.indices.contains(index) else { return }
+        hosts[index].enabled = enabled
+        hostStore.save(hosts)
+        renderHosts()
+        onChange()
+    }
+
+    private func deleteHost(_ index: Int) {
+        var hosts = hostStore.load()
+        guard hosts.indices.contains(index) else { return }
+        hosts.remove(at: index)
+        hostStore.save(hosts)
+        resetHostForm()
+        renderHosts()
+        onChange()
+    }
+
+    private func syncLaunchAtLoginState() {
+        if #available(macOS 13.0, *) {
+            launchAtLoginButton.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        } else {
+            launchAtLoginButton.isEnabled = false
+            launchAtLoginButton.state = .off
+        }
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        guard #available(macOS 13.0, *) else { return }
+        do {
+            if launchAtLoginButton.state == .on {
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
+                }
+            } else if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            launchAtLoginButton.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        }
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    private func pageTitle(_ title: String, symbolName: String) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 12
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) ?? NSImage()
+        image.isTemplate = true
+        let icon = NSImageView(image: image)
+        icon.symbolConfiguration = .init(pointSize: 22, weight: .semibold)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 24, weight: .semibold)
+        stack.addArrangedSubview(icon)
+        stack.addArrangedSubview(label)
+        stack.addArrangedSubview(NSView())
+        return stack
+    }
+
+    private func settingRow(title: String, control: NSView) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+        row.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 14, right: 18)
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 16, weight: .semibold)
+        row.addArrangedSubview(label)
+        row.addArrangedSubview(NSView())
+        row.addArrangedSubview(control)
+        return row
+    }
+
+    private func settingsCard() -> NSView {
+        let card = NSView()
+        card.wantsLayer = true
+        card.layer?.cornerRadius = 18
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
+        card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.34).cgColor
+        return card
+    }
+
+    private func separator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        return box
+    }
+
+    private func label(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+
+    private func sectionLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+}
+
+@MainActor
+final class SettingsSidebarButton: NSButton {
+    var isSelected: Bool = false {
+        didSet { updateSelectionStyle() }
+    }
+
+    init(title: String, symbolName: String) {
+        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) ?? NSImage()
+        image.isTemplate = true
+        super.init(frame: .zero)
+        self.title = title
+        self.image = image
+        imagePosition = .imageLeading
+        alignment = .left
+        isBordered = false
+        font = .systemFont(ofSize: 16, weight: .semibold)
+        contentTintColor = .labelColor
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 54).isActive = true
+        updateSelectionStyle()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func updateSelectionStyle() {
+        layer?.backgroundColor = isSelected
+            ? NSColor.controlBackgroundColor.withAlphaComponent(0.62).cgColor
+            : NSColor.clear.cgColor
     }
 }
 

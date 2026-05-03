@@ -13,13 +13,13 @@ It is inspired by the clean terminal table style of [`better-docker-ps`](https:/
 - Container ID, name, tag, state, status, and ports
 - Hover any table cell to see the full value
 - Click any table cell to copy the full value
-- Remote hosts managed inside the popover
+- Sidebar-style settings window for general options and remote hosts
 - Launch-at-login control
 - Temporary password-based SSH support for testing
 
 ## Remote Hosts
 
-Open Bartainer from the menu bar and switch to the `Hosts` tab.
+Open Bartainer from the menu bar, click the settings icon, and choose `Hosts` in the sidebar.
 
 Each remote host supports:
 
