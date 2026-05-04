@@ -1,56 +1,82 @@
-# Bartainer
+<p align="center">
+  <img src="assets/bartainer-logo.png" alt="Bartainer" width="128" height="128" />
+</p>
 
-**A tidy macOS menu bar for your Docker containers.**
+<h1 align="center">Bartainer</h1>
 
-Bartainer keeps local and remote Docker containers close without opening a terminal. Click the menu bar icon, scan the table, copy what you need, and get back to work.
+<p align="center">
+  <strong>Docker containers in your menu bar.</strong><br />
+  A compact macOS app for local and remote Docker — without living in Terminal.
+</p>
+
+<p align="center">
+  <a href="https://github.com/cobanov/bartainer/releases/latest"><img src="https://img.shields.io/github/v/release/cobanov/bartainer?label=Download&color=0a7c75&logo=github" alt="Latest release" /></a>
+  <img src="https://img.shields.io/badge/macOS-13%2B-000000?logo=apple" alt="macOS 13+" />
+</p>
+
+---
 
 ## Download
 
-Install with Homebrew:
+**Homebrew**
 
-```sh
+```bash
 brew install --cask cobanov/tap/bartainer
 ```
 
-Or download the latest macOS build from **[GitHub Releases](https://github.com/cobanov/bartainer/releases/latest)**:
+**Manual install** — grab the latest zip from [**Releases**](https://github.com/cobanov/bartainer/releases/latest):
 
-1. Download `Bartainer-*-macos.zip`.
-2. Unzip it.
-3. Move `Bartainer.app` to your **Applications** folder.
-4. Open Bartainer.
+1. Download `Bartainer-*-macos.zip`
+2. Unzip and move **Bartainer.app** to **Applications**
+3. Open the app
 
-If macOS says the app cannot be opened because it was downloaded from the internet, right-click `Bartainer.app`, choose **Open**, then confirm once.
+If Gatekeeper blocks the app, **right‑click** `Bartainer.app` → **Open** → confirm once.
 
-## What it does
+---
 
-- Shows Docker containers from your Mac in the menu bar.
-- Supports remote Docker hosts over SSH.
-- Groups containers by host.
-- Shows ID, name, image tag, state, status, and ports.
-- Click a cell to copy its full value.
+## What you get
 
-## Pricing
+| | |
+| --- | --- |
+| **Menu bar first** | One click: see every container, grouped by host |
+| **Local + remote** | SSH-backed remote hosts alongside your Mac |
+| **Fast at a glance** | ID, name, tag, state, status, ports in a tight table |
+| **Copy anything** | Click a cell to copy; hover clipped text for the full value |
+| **Native settings** | Launch at login, refresh interval, columns, hosts — all in System-style UI |
 
-Bartainer is free for local containers and one remote host.
+---
 
-**Bartainer Pro** is a one-time **$2** purchase that unlocks more remote hosts. Open **Settings → Pro** in the app to activate a license.
+## Pro
+
+Bartainer is **free** for local Docker and **one** active remote host.
+
+**Bartainer Pro** — **$2 one-time** — unlocks unlimited remote hosts. Activate in the app under **Settings → Pro**.
+
+---
 
 ## Requirements
 
-- macOS 13 or newer
-- Docker CLI
-- SSH access for remote hosts (optional)
+- **macOS 13** (Ventura) or newer  
+- **Docker CLI** (Docker Desktop or your runtime of choice)  
+- **SSH** to remote hosts (optional; key-based login recommended)
 
-## Remote hosts
+Remote check from Terminal (should run without a password prompt for the smoothest experience):
 
-In the app, open **Settings → Hosts** and add a remote host. For the smoothest setup, use SSH keys so this works without a password prompt:
-
-```sh
+```bash
 ssh user@host docker ps
 ```
 
-Password-based SSH is optional; passwords are stored in the macOS Keychain.
+---
 
-## Local Docker
+## Links
 
-Make sure Docker Desktop (or your Docker runtime) is running before opening Bartainer from the menu bar.
+| | |
+| --- | --- |
+| **Website** | [bartainer.app](https://bartainer.app) |
+| **Latest build** | [GitHub Releases](https://github.com/cobanov/bartainer/releases/latest) |
+
+---
+
+<p align="center">
+  <sub>Built for people who live in Docker but want macOS to stay quiet.</sub>
+</p>
