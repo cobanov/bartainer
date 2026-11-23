@@ -14,6 +14,11 @@
   <img src="https://img.shields.io/badge/macOS-13%2B-000000?logo=apple" alt="macOS 13+" />
 </p>
 
+> [!IMPORTANT]
+> **This menu bar app is retired.** Bartainer is now **Bartainer Native**, a full native Mac app for local and remote Docker that also lives in your menu bar.
+> Download it from **[bartainer.app](https://bartainer.app/download)**. It is free for local Docker and one remote host; [Bartainer Pro](https://bartainer.app/pro/) unlocks every remote host.
+> The builds below stay available but won't be updated.
+
 ---
 
 ## Download
@@ -48,9 +53,7 @@ If Gatekeeper blocks the app, **right‑click** `Bartainer.app` → **Open** →
 
 ## Pro
 
-Bartainer is **free** for local Docker and **one** active remote host.
-
-**Bartainer Pro** — **$2 one-time** — unlocks unlimited remote hosts. Activate in the app under **Settings → Pro**.
+Bartainer Pro is sold for Bartainer Native only. See [bartainer.app/pro](https://bartainer.app/pro/).
 
 ---
 
